@@ -1,0 +1,808 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Movie night</title>
+<!--
+  Movie night: a two-person video call where either person can share a browser tab
+  (with its sound) to the other. Peer to peer through PeerJS, no backend, no accounts.
+  Host this file on any https static host (Netlify, GitHub Pages, Vercel, Cloudflare Pages).
+-->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bungee&display=swap">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #ECE6F6;
+    --panel: #FFFFFF;
+    --ink: #27223D;
+    --muted: #5C567C;
+    --line: #CFC7E2;
+    --amber: #F4B860;
+    --on-amber: #2A1F0A;
+    --alert: #C62F3A;
+    --on-alert: #FFFFFF;
+    --ok: #23804F;
+    --stage: #000000;
+    --stage-ink: #F3EEDF;
+    --stage-muted: #C4BEDD;
+    --board: #1A1727;
+    --letter: #F6F1E3;
+    --letter-ink: #1B1830;
+    --toast: #27223D;
+    --on-toast: #F3EEDF;
+    --display: "Bungee", "Arial Black", Impact, system-ui, sans-serif;
+    --text: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --bg: #1E1B2E;
+      --panel: #2A2640;
+      --ink: #F3EEDF;
+      --muted: #A9A2C7;
+      --line: #474063;
+      --alert: #F0555E;
+      --on-alert: #1E1B2E;
+      --ok: #6FD39A;
+      --toast: #F3EEDF;
+      --on-toast: #1E1B2E;
+    }
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--text);
+    font-size: 1rem;
+    line-height: 1.5;
+    padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+             max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+    gap: 10px 16px; margin-bottom: 16px;
+  }
+  h1 {
+    margin: 0;
+    font-family: var(--display); font-weight: 400;
+    font-size: clamp(1.5rem, 3.2vw, 2.1rem); line-height: 1; letter-spacing: .01em;
+  }
+  .status { margin: 0; display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: .95rem; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+  .status[data-state="wait"] .dot { background: var(--amber); }
+  .status[data-state="live"] .dot { background: var(--ok); }
+  .status[data-state="error"] .dot { background: var(--alert); }
+
+  /* Lobby: the room code as a cinema marquee letterboard */
+  .lobby {
+    display: grid; justify-items: center; gap: 24px;
+    padding: clamp(32px, 7vw, 72px) 20px;
+    background: var(--panel); color: var(--ink);
+    border-radius: 18px; text-align: center;
+  }
+  .lobby p { margin: 0; max-width: 44ch; color: var(--muted); font-size: 1.05rem; }
+  .marquee {
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 6px;
+    max-width: min(100%, 640px);
+    padding: 14px 16px;
+    background: var(--board);
+    border: 7px dotted var(--amber);
+    border-radius: 14px;
+    box-shadow: 0 0 0 5px var(--board), 0 0 36px rgba(244, 184, 96, .35);
+  }
+  .marquee span {
+    display: grid; place-items: center;
+    width: 1.06em; height: 1.32em;
+    font-family: var(--display); font-weight: 400;
+    font-size: clamp(1.3rem, 4.6vw, 2.5rem); line-height: 1;
+    background: var(--letter); color: var(--letter-ink);
+    border-radius: 3px;
+    box-shadow: inset 0 -3px 0 rgba(27, 24, 48, .2);
+  }
+  .row { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+
+  /* Stage: the movie (or their camera) fills it, faces float top right */
+  .stage {
+    --gap: 10px;
+    --tile-w: clamp(92px, 16vw, 210px);
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    max-height: calc(100vh - 230px);
+    min-height: 220px;
+    background: var(--stage); color: var(--stage-ink);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .stage:fullscreen { width: 100vw; height: 100vh; max-height: none; border-radius: 0; aspect-ratio: auto; }
+  .stage:-webkit-full-screen { width: 100vw; height: 100vh; max-height: none; border-radius: 0; }
+  .stage video { position: absolute; display: block; background: var(--stage); }
+  #screen { inset: 0; width: 100%; height: 100%; object-fit: contain; display: none; }
+  body.has-screen #screen { display: block; }
+  #remote { inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .tile, body.has-screen #remote {
+    inset: auto;
+    right: var(--gap);
+    width: var(--tile-w);
+    height: calc(var(--tile-w) * 0.75);
+    object-fit: cover;
+    border-radius: 10px;
+    border: 2px solid rgba(243, 238, 223, .85);
+    box-shadow: 0 8px 22px rgba(0, 0, 0, .5);
+    z-index: 3;
+  }
+  #local { top: var(--gap); transform: scaleX(-1); }
+  #local.off { visibility: hidden; }
+  body.has-screen #remote { top: var(--gap); }
+  body.has-screen #local { top: calc(var(--gap) * 2 + var(--tile-w) * 0.75); }
+
+  .overlay {
+    position: absolute; inset: 0; z-index: 6;
+    display: grid; place-items: center; align-content: center; gap: 14px;
+    padding: 20px; text-align: center;
+  }
+  .overlay p { margin: 0; max-width: 46ch; }
+  .waiting { background: rgba(0, 0, 0, .6); color: var(--stage-ink); font-size: 1.05rem; }
+  .waiting .link { color: var(--stage-muted); font-size: .9rem; word-break: break-all; max-width: 60ch; }
+  .tap { background: rgba(0, 0, 0, .45); }
+  .banner {
+    position: absolute; left: var(--gap); bottom: var(--gap); z-index: 4;
+    padding: 7px 12px; border-radius: 8px;
+    background: var(--alert); color: var(--on-alert);
+    font-weight: 700; font-size: .9rem;
+  }
+
+  /* Controls */
+  button {
+    font-family: var(--text); font-weight: 700; font-size: .95rem; line-height: 1.1;
+    min-height: 44px; padding: 10px 16px;
+    border-radius: 999px; border: 1.5px solid var(--line);
+    background: var(--panel); color: var(--ink);
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button:focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--amber); border-color: var(--amber); color: var(--on-amber); }
+  button.live { background: var(--alert); border-color: var(--alert); color: var(--on-alert); }
+  button[data-off="true"] { border-color: var(--alert); color: var(--alert); }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+  .push { flex: 1; }
+  .vol { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: .9rem; }
+  .vol input { width: 120px; accent-color: var(--amber); }
+  .hint { margin: 12px 0 0; max-width: 78ch; color: var(--muted); font-size: .92rem; }
+  .hint + .hint { margin-top: 4px; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); z-index: 30;
+    transform: translateX(-50%);
+    width: max-content; max-width: min(92vw, 520px);
+    padding: 12px 16px; border-radius: 10px;
+    background: var(--toast); color: var(--on-toast);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, .3);
+    font-size: .95rem;
+  }
+
+  @media (max-width: 640px) {
+    .stage { min-height: 240px; max-height: none; }
+    .push { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Movie night</h1>
+    <p class="status" id="status" role="status" data-state="idle"><span class="dot" aria-hidden="true"></span><span id="statusText">Not joined yet</span></p>
+  </header>
+
+  <section class="lobby" id="lobby">
+    <div class="marquee" id="marquee"></div>
+    <p>Send this link to the other person. Whoever opens it first waits for the other.</p>
+    <div class="row">
+      <button class="primary" id="joinBtn">Join</button>
+      <button id="lobbyInvite">Copy invite link</button>
+    </div>
+  </section>
+
+  <section id="call" hidden>
+    <div class="stage" id="stage">
+      <video id="screen" autoplay playsinline></video>
+      <video id="remote" autoplay playsinline></video>
+      <video id="local" class="tile" autoplay playsinline muted></video>
+      <div class="banner" id="shareBanner" hidden>You’re sharing a tab</div>
+
+      <div class="overlay waiting" id="waiting" hidden>
+        <p id="waitText">Waiting for the other person to open the link.</p>
+        <p class="link" id="waitLink"></p>
+        <button class="primary" id="waitInvite">Copy invite link</button>
+      </div>
+
+      <div class="overlay tap" id="tapToPlay" hidden>
+        <button class="primary" id="playBtn">Start video and sound</button>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="micBtn">Mute</button>
+      <button id="camBtn">Camera off</button>
+      <button class="primary" id="shareBtn">Share a tab</button>
+      <button id="pipBtn" title="Floats their camera over other tabs while you watch">Pop out their camera</button>
+      <button id="fsBtn">Full screen</button>
+      <label class="vol" id="volWrap" hidden>Movie volume <input id="vol" type="range" min="0" max="1" step="0.05" value="1"></label>
+      <span class="push"></span>
+      <button id="inviteBtn">Copy invite link</button>
+      <button id="leaveBtn">Leave</button>
+    </div>
+    <p class="hint">To share a movie, open it in another Chrome or Edge tab, press Share a tab, pick that tab, and keep “Also share tab audio” on. Whoever shares should wear headphones so the movie doesn’t echo through their mic.</p>
+    <p class="hint">Seeing a black screen? Netflix and most paid streaming sites block screen sharing. For those, play it on both laptops in sync with Teleparty and keep this call open.</p>
+  </section>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
+<script>
+(() => {
+  'use strict';
+
+  const $ = (id) => document.getElementById(id);
+  const ui = {
+    status: $('status'), statusText: $('statusText'),
+    lobby: $('lobby'), marquee: $('marquee'), joinBtn: $('joinBtn'), lobbyInvite: $('lobbyInvite'),
+    call: $('call'), stage: $('stage'), screen: $('screen'), remote: $('remote'), local: $('local'),
+    shareBanner: $('shareBanner'), waiting: $('waiting'), waitText: $('waitText'), waitLink: $('waitLink'),
+    waitInvite: $('waitInvite'), tapToPlay: $('tapToPlay'), playBtn: $('playBtn'),
+    micBtn: $('micBtn'), camBtn: $('camBtn'), shareBtn: $('shareBtn'), pipBtn: $('pipBtn'), fsBtn: $('fsBtn'),
+    volWrap: $('volWrap'), vol: $('vol'), inviteBtn: $('inviteBtn'), leaveBtn: $('leaveBtn'), toast: $('toast'),
+  };
+
+  const md = navigator.mediaDevices;
+  const PeerClass = (window.peerjs && window.peerjs.Peer) || window.Peer;
+  // Only Chromium browsers (Chrome, Edge, Brave, Arc) can send a tab's sound.
+  const isChromium = !!(navigator.userAgentData && navigator.userAgentData.brands &&
+    navigator.userAgentData.brands.some((b) => /Chromium/i.test(b.brand)));
+
+  // Both people open the same link. The first one in claims the room id on the free
+  // PeerJS server and waits. The second one finds the id taken and calls the first.
+  const ROOM = readRoom();
+  const HOST_ID = 'movienight-' + ROOM;
+
+  const state = {
+    stream: null, hasMic: false, hasCam: false,
+    peer: null, gen: 0, role: null, remoteId: null, connected: false,
+    camCall: null, data: null, screenOut: null, screenIn: null, sharing: null,
+    joinTimer: 0, retryTimer: 0,
+  };
+
+  // ---------- Page setup ----------
+  for (const ch of ROOM.toUpperCase()) {
+    const letter = document.createElement('span');
+    letter.textContent = ch;
+    ui.marquee.appendChild(letter);
+  }
+  ui.marquee.setAttribute('role', 'img');
+  ui.marquee.setAttribute('aria-label', 'Room code ' + ROOM);
+  ui.waitLink.textContent = inviteUrl();
+
+  if (!(md && md.getDisplayMedia)) ui.shareBtn.hidden = true;
+  if (!document.pictureInPictureEnabled) ui.pipBtn.hidden = true;
+  if (!(ui.stage.requestFullscreen || ui.stage.webkitRequestFullscreen)) ui.fsBtn.hidden = true;
+
+  ui.joinBtn.addEventListener('click', join);
+  [ui.lobbyInvite, ui.waitInvite, ui.inviteBtn].forEach((b) => b.addEventListener('click', copyInvite));
+  ui.shareBtn.addEventListener('click', () => (state.sharing ? stopShare(false) : startShare()));
+  ui.micBtn.addEventListener('click', toggleMic);
+  ui.camBtn.addEventListener('click', toggleCam);
+  ui.pipBtn.addEventListener('click', togglePip);
+  ui.fsBtn.addEventListener('click', toggleFullscreen);
+  ui.leaveBtn.addEventListener('click', leave);
+  ui.playBtn.addEventListener('click', () => {
+    ui.tapToPlay.hidden = true;
+    [ui.remote, ui.screen].forEach((v) => { if (v.srcObject) v.play().catch(() => {}); });
+  });
+  ui.vol.addEventListener('input', () => { ui.screen.volume = Number(ui.vol.value); });
+  ui.stage.addEventListener('dblclick', (e) => { if (!e.target.closest('button')) toggleFullscreen(); });
+  ui.remote.addEventListener('enterpictureinpicture', () => { ui.pipBtn.textContent = 'Close pop-out'; });
+  ui.remote.addEventListener('leavepictureinpicture', () => { ui.pipBtn.textContent = 'Pop out their camera'; });
+  ['fullscreenchange', 'webkitfullscreenchange'].forEach((name) => document.addEventListener(name, () => {
+    const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    ui.fsBtn.textContent = on ? 'Exit full screen' : 'Full screen';
+  }));
+  try {
+    // Recent Chrome can float their camera by itself when you switch to the movie tab.
+    navigator.mediaSession.setActionHandler('enterpictureinpicture', () => {
+      if (ui.remote.srcObject && !document.pictureInPictureElement) {
+        ui.remote.requestPictureInPicture().catch(() => {});
+      }
+    });
+  } catch (e) { /* not supported in this browser */ }
+  window.addEventListener('pagehide', () => {
+    send({ type: 'bye' });
+    state.gen++;
+    if (state.peer) { try { state.peer.destroy(); } catch (e) { /* already gone */ } }
+  });
+  window.addEventListener('pageshow', (e) => { if (e.persisted) location.reload(); });
+
+  // ---------- Room link ----------
+  function readRoom() {
+    const url = new URL(location.href);
+    let room = (url.searchParams.get('room') || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .slice(0, 32)
+      .replace(/^-+|-+$/g, '');
+    if (!room) {
+      room = randomCode(8);
+      url.searchParams.set('room', room);
+      try { history.replaceState(null, '', url.toString()); } catch (e) { /* fine to skip */ }
+    }
+    return room;
+  }
+
+  function randomCode(n) {
+    const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+    const bytes = crypto.getRandomValues(new Uint8Array(n));
+    let out = '';
+    for (let i = 0; i < n; i++) out += chars[bytes[i] % chars.length];
+    return out;
+  }
+
+  function inviteUrl() {
+    const url = new URL(location.href);
+    url.searchParams.set('room', ROOM);
+    url.hash = '';
+    return url.toString();
+  }
+
+  async function copyInvite() {
+    const link = inviteUrl();
+    const local = location.protocol === 'file:';
+    if (local) {
+      toast('This copy only lives on your computer. Put the file on an https site to invite someone. To test, open the same link in a second tab.', 10000);
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      if (!local) toast('Invite link copied. Send it to the other person.');
+    } catch (e) {
+      window.prompt('Copy this link and send it to the other person:', link);
+    }
+  }
+
+  // ---------- Small helpers ----------
+  function setStatus(text, kind) {
+    ui.statusText.textContent = text;
+    ui.status.dataset.state = kind || 'wait';
+  }
+
+  let toastTimer = 0;
+  function toast(msg, ms) {
+    ui.toast.textContent = msg;
+    ui.toast.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { ui.toast.hidden = true; }, ms || 5000);
+  }
+
+  function showWaiting(text) { ui.waitText.textContent = text; ui.waiting.hidden = false; }
+  function hideWaiting() { ui.waiting.hidden = true; }
+
+  function safeClose(conn) { try { conn.close(); } catch (e) { /* already closed */ } }
+
+  function safePlay(video) {
+    const p = video.play();
+    if (p && p.catch) {
+      p.catch((err) => { if (err && err.name === 'NotAllowedError') ui.tapToPlay.hidden = false; });
+    }
+  }
+
+  function send(msg) {
+    const conn = state.data;
+    if (conn && conn.open) { try { conn.send(msg); } catch (e) { /* channel closing */ } }
+  }
+
+  // ---------- Joining ----------
+  async function join() {
+    if (!window.isSecureContext || !md || !md.getUserMedia) {
+      setStatus('Needs https', 'error');
+      toast('Open this page from an https address (or localhost) so the browser allows the camera and screen sharing.', 10000);
+      return;
+    }
+    if (!PeerClass) {
+      setStatus('Didn’t load', 'error');
+      toast('The connection library didn’t load. Check your internet connection and reload.', 10000);
+      return;
+    }
+    ui.joinBtn.disabled = true;
+    setStatus('Starting camera…', 'wait');
+    const media = await getLocalMedia();
+    state.stream = media.stream;
+    state.hasMic = media.mic;
+    state.hasCam = media.cam;
+    ui.local.srcObject = state.stream;
+    ui.local.classList.toggle('off', !state.hasCam);
+    ui.local.play().catch(() => {});
+    ui.micBtn.disabled = !state.hasMic;
+    ui.camBtn.disabled = !state.hasCam;
+    ui.lobby.hidden = true;
+    ui.call.hidden = false;
+    connect();
+  }
+
+  async function getLocalMedia() {
+    const voice = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    try {
+      const stream = await md.getUserMedia({
+        audio: voice,
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
+      });
+      return { stream, mic: true, cam: true };
+    } catch (e) { /* fall back to mic only */ }
+    try {
+      const stream = await md.getUserMedia({ audio: voice });
+      toast('Camera unavailable, so you joined with your mic only.');
+      return { stream, mic: true, cam: false };
+    } catch (e) { /* fall back to watching only */ }
+    toast('Camera and mic are blocked, so you joined to watch only. Allow them in the address bar and reload to talk.', 10000);
+    return { stream: silentStream(), mic: false, cam: false };
+  }
+
+  // PeerJS needs some stream to place a call, so a watch-only guest sends silence.
+  function silentStream() {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    return new Ctx().createMediaStreamDestination().stream;
+  }
+
+  function connect() {
+    const gen = ++state.gen;
+    teardown();
+    setStatus('Connecting…', 'wait');
+    showWaiting('Connecting to the room…');
+    const peer = new PeerClass(HOST_ID, { debug: 1 });
+    state.peer = peer;
+    peer.on('open', () => {
+      if (gen !== state.gen) return;
+      state.role = 'host';
+      setStatus('Waiting for the other person', 'wait');
+      showWaiting('Waiting for the other person to open the link.');
+    });
+    wirePeer(peer, gen, true);
+  }
+
+  function connectAsGuest() {
+    const gen = ++state.gen;
+    teardown();
+    const peer = new PeerClass({ debug: 1 });
+    state.peer = peer;
+    peer.on('open', () => {
+      if (gen !== state.gen) return;
+      state.role = 'guest';
+      setStatus('Joining…', 'wait');
+      const conn = peer.connect(HOST_ID, { reliable: true });
+      if (conn) wireData(conn, gen);
+      const call = peer.call(HOST_ID, state.stream, { metadata: { kind: 'cam' } });
+      if (call) wireCam(call, gen);
+      state.joinTimer = setTimeout(() => {
+        if (gen === state.gen && !state.connected) scheduleRetry(0);
+      }, 15000);
+    });
+    wirePeer(peer, gen, false);
+  }
+
+  function wirePeer(peer, gen, claimingRoom) {
+    peer.on('call', (call) => { if (gen === state.gen) onIncomingCall(call, gen); });
+    peer.on('connection', (conn) => { if (gen === state.gen) wireData(conn, gen); });
+    peer.on('disconnected', () => {
+      if (gen !== state.gen) return;
+      // Lost the connection server. A call that is already running keeps going.
+      setTimeout(() => {
+        if (gen === state.gen && peer.disconnected && !peer.destroyed) {
+          try { peer.reconnect(); } catch (e) { scheduleRetry(2000); }
+        }
+      }, 2500);
+    });
+    peer.on('error', (err) => {
+      if (gen !== state.gen) return;
+      const type = err && err.type;
+      if (type === 'unavailable-id' && claimingRoom) {
+        if (!state.connected) connectAsGuest();   // someone is already here, so call them
+        return;
+      }
+      if (type === 'peer-unavailable') {
+        if (!claimingRoom) scheduleRetry(1000);   // nobody is hosting right now, so try to host
+        return;
+      }
+      if (type === 'browser-incompatible') {
+        setStatus('Browser not supported', 'error');
+        toast('Use a current version of Chrome or Edge.', 10000);
+        return;
+      }
+      if (type === 'network' || type === 'server-error' || type === 'socket-error' || type === 'socket-closed') {
+        if (state.connected) return;
+        setStatus('Can’t reach the connection server. Retrying…', 'error');
+        scheduleRetry(3000);
+        return;
+      }
+      console.warn('PeerJS error:', type, err);
+    });
+  }
+
+  function scheduleRetry(ms) {
+    clearTimeout(state.retryTimer);
+    state.retryTimer = setTimeout(connect, ms + Math.floor(Math.random() * 900));
+  }
+
+  // Ends everything with the current partner but keeps our link to the server.
+  function dropCall() {
+    stopShare(true);
+    hideScreen();
+    const cam = state.camCall;
+    const data = state.data;
+    state.camCall = null;
+    state.data = null;
+    state.connected = false;
+    if (cam) safeClose(cam);
+    if (data) safeClose(data);
+    ui.remote.srcObject = null;
+    if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
+  }
+
+  function teardown() {
+    clearTimeout(state.joinTimer);
+    clearTimeout(state.retryTimer);
+    dropCall();
+    const peer = state.peer;
+    state.peer = null;
+    state.role = null;
+    state.remoteId = null;
+    if (peer) { try { peer.destroy(); } catch (e) { /* already gone */ } }
+  }
+
+  function leave() {
+    send({ type: 'bye' });
+    state.gen++;
+    teardown();
+    if (state.stream) state.stream.getTracks().forEach((t) => t.stop());
+    location.reload();
+  }
+
+  // ---------- Calls ----------
+  function onIncomingCall(call, gen) {
+    const kind = call.metadata && call.metadata.kind;
+    if (kind === 'screen') {
+      const prev = state.screenIn;
+      state.screenIn = call;
+      if (prev && prev !== call) safeClose(prev);
+      call.on('stream', (stream) => { if (gen === state.gen && state.screenIn === call) showScreen(stream); });
+      call.on('close', () => { if (state.screenIn === call) hideScreen(); });
+      call.on('error', (err) => console.warn('Screen share error:', err));
+      call.answer();   // receive only, nothing to send back
+      return;
+    }
+    wireCam(call, gen);
+    call.answer(state.stream);
+  }
+
+  function wireCam(call, gen) {
+    const prev = state.camCall;
+    state.camCall = call;
+    state.remoteId = call.peer;
+    if (prev && prev !== call) safeClose(prev);
+    call.on('stream', (stream) => {
+      if (gen !== state.gen || state.camCall !== call) return;
+      if (ui.remote.srcObject !== stream) ui.remote.srcObject = stream;
+      safePlay(ui.remote);
+      markConnected();
+    });
+    call.on('close', () => { if (gen === state.gen && state.camCall === call) partnerLeft(); });
+    call.on('error', (err) => console.warn('Call error:', err));
+  }
+
+  function wireData(conn, gen) {
+    const prev = state.data;
+    state.data = conn;
+    if (prev && prev !== conn) safeClose(prev);
+    conn.on('open', () => {
+      if (gen !== state.gen || state.data !== conn) return;
+      state.remoteId = conn.peer;
+      markConnected();
+    });
+    conn.on('data', (msg) => {
+      if (gen !== state.gen || state.data !== conn || !msg) return;
+      if (msg.type === 'screen-off') hideScreen();
+      if (msg.type === 'bye') partnerLeft();
+    });
+    conn.on('close', () => { if (gen === state.gen && state.data === conn) partnerLeft(); });
+    conn.on('error', (err) => console.warn('Data channel error:', err));
+  }
+
+  function markConnected() {
+    clearTimeout(state.joinTimer);
+    if (state.connected) return;
+    state.connected = true;
+    setStatus('Connected', 'live');
+    hideWaiting();
+  }
+
+  function partnerLeft() {
+    const wasConnected = state.connected;
+    dropCall();
+    if (wasConnected) toast('The other person left the call.');
+    if (state.role === 'host') {
+      setStatus('Waiting for the other person', 'wait');
+      showWaiting('Waiting for the other person to open the link.');
+    } else {
+      // Take over the room so either of you can come back with the same link.
+      setStatus('Reconnecting…', 'wait');
+      showWaiting('Reconnecting…');
+      scheduleRetry(1000);
+    }
+  }
+
+  // ---------- Their shared tab ----------
+  function showScreen(stream) {
+    if (ui.screen.srcObject !== stream) ui.screen.srcObject = stream;
+    ui.screen.volume = Number(ui.vol.value);
+    document.body.classList.add('has-screen');
+    ui.volWrap.hidden = false;
+    safePlay(ui.screen);
+  }
+
+  function hideScreen() {
+    const call = state.screenIn;
+    state.screenIn = null;
+    if (call) safeClose(call);
+    ui.screen.srcObject = null;
+    document.body.classList.remove('has-screen');
+    ui.volWrap.hidden = true;
+  }
+
+  // ---------- Sharing my tab ----------
+  function displayOptions(withAudio) {
+    const opts = {
+      video: { frameRate: { ideal: 30, max: 30 }, width: { max: 1920 }, height: { max: 1080 } },
+      audio: withAudio ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false,
+      selfBrowserSurface: 'exclude',   // keep this call tab out of the picker
+      surfaceSwitching: 'include',     // lets you switch to a different tab mid-movie
+    };
+    if (withAudio) opts.systemAudio = 'include';
+    return opts;
+  }
+
+  async function startShare() {
+    if (!state.connected || !state.peer || !state.remoteId) {
+      toast('Share once the other person has joined.');
+      return;
+    }
+    let stream = null;
+    try {
+      stream = await md.getDisplayMedia(displayOptions(isChromium));
+    } catch (err) {
+      if (err && err.name === 'NotAllowedError') return;   // picker was closed
+      try {
+        stream = await md.getDisplayMedia(displayOptions(false));
+      } catch (err2) {
+        if (!err2 || err2.name !== 'NotAllowedError') toast('This browser couldn’t start screen sharing. Try Chrome or Edge.');
+        return;
+      }
+    }
+    if (!state.connected || !state.peer || !state.remoteId) {
+      stream.getTracks().forEach((t) => t.stop());
+      toast('The other person left, so sharing stopped.');
+      return;
+    }
+    const video = stream.getVideoTracks()[0];
+    const audio = stream.getAudioTracks()[0];
+    if (video) {
+      try { video.contentHint = 'motion'; } catch (e) { /* older browser */ }   // smooth motion over sharp text
+      video.addEventListener('ended', () => {   // the browser’s own Stop sharing button
+        if (state.sharing && state.sharing.stream === stream) stopShare(false);
+      });
+    }
+    if (audio) { try { audio.contentHint = 'music'; } catch (e) { /* older browser */ } }
+    state.sharing = { stream };
+    const call = state.peer.call(state.remoteId, stream, { metadata: { kind: 'screen' } });
+    if (!call) { stopShare(true); toast('Sharing didn’t start. Try again.'); return; }
+    state.screenOut = call;
+    raiseQuality(call.peerConnection);
+    call.on('close', () => { if (state.screenOut === call) stopShare(false); });
+    call.on('error', (err) => console.warn('Share error:', err));
+    updateShareUi();
+    if (!audio) {
+      toast(isChromium
+        ? 'Sharing picture only. For sound, stop, share again, pick a tab, and keep “Also share tab audio” on.'
+        : 'Sharing picture only. To send the movie’s sound, share from Chrome or Edge.', 10000);
+    }
+  }
+
+  function stopShare(silent) {
+    const share = state.sharing;
+    if (!share) return;
+    state.sharing = null;
+    share.stream.getTracks().forEach((t) => t.stop());
+    const call = state.screenOut;
+    state.screenOut = null;
+    if (call) safeClose(call);
+    if (!silent) send({ type: 'screen-off' });
+    updateShareUi();
+  }
+
+  function updateShareUi() {
+    const on = !!state.sharing;
+    ui.shareBtn.textContent = on ? 'Stop sharing' : 'Share a tab';
+    ui.shareBtn.classList.toggle('live', on);
+    ui.shareBtn.classList.toggle('primary', !on);
+    ui.shareBanner.hidden = !on;
+  }
+
+  // Browsers keep screen shares at a modest bitrate tuned for slides.
+  // A movie wants more bits, so raise the ceilings once the share connects.
+  function raiseQuality(pc) {
+    if (!pc) return;
+    const apply = () => {
+      pc.getSenders().forEach((sender) => {
+        if (!sender.track) return;
+        const params = sender.getParameters();
+        if (!params.encodings || !params.encodings.length) return;
+        if (sender.track.kind === 'video') {
+          params.encodings[0].maxBitrate = 6000000;
+          params.encodings[0].maxFramerate = 30;
+        } else {
+          params.encodings[0].maxBitrate = 128000;
+        }
+        sender.setParameters(params).catch((err) => console.warn('Could not raise bitrate:', err));
+      });
+    };
+    const check = () => { if (pc.connectionState === 'connected') apply(); };
+    pc.addEventListener('connectionstatechange', check);
+    check();
+  }
+
+  // ---------- Buttons ----------
+  function toggleMic() {
+    const track = state.stream && state.stream.getAudioTracks()[0];
+    if (!track || !state.hasMic) return;
+    track.enabled = !track.enabled;
+    ui.micBtn.textContent = track.enabled ? 'Mute' : 'Unmute';
+    ui.micBtn.dataset.off = String(!track.enabled);
+  }
+
+  function toggleCam() {
+    const track = state.stream && state.stream.getVideoTracks()[0];
+    if (!track || !state.hasCam) return;
+    track.enabled = !track.enabled;
+    ui.camBtn.textContent = track.enabled ? 'Camera off' : 'Camera on';
+    ui.camBtn.dataset.off = String(!track.enabled);
+    ui.local.classList.toggle('off', !track.enabled);
+  }
+
+  async function togglePip() {
+    try {
+      if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return; }
+      if (!ui.remote.srcObject) { toast('Their camera appears here once they join.'); return; }
+      await ui.remote.requestPictureInPicture();
+    } catch (e) {
+      toast('Couldn’t pop out their camera in this browser. Chrome and Edge support it.');
+    }
+  }
+
+  function toggleFullscreen() {
+    const active = document.fullscreenElement || document.webkitFullscreenElement;
+    const run = active
+      ? (document.exitFullscreen || document.webkitExitFullscreen).call(document)
+      : (ui.stage.requestFullscreen || ui.stage.webkitRequestFullscreen).call(ui.stage);
+    if (run && run.catch) run.catch(() => {});
+  }
+})();
+</script>
+</body>
+</html>
